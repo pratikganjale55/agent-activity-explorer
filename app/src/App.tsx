@@ -1,41 +1,56 @@
-import { useCallback } from 'react';
-import { navigate, useUrlState } from './useUrlState';
-import { useEvents } from './useEvents';
-import { useSlow } from './useSlow';
-import { EventTable } from './components/EventTable';
-import { EmptyState, ErrorBox, TableSkeleton } from './components/States';
+import { useCallback } from "react";
+import { navigate, useUrlState } from "./useUrlState";
+import { useEvents } from "./useEvents";
+import { useSlow } from "./useSlow";
+import { EventTable } from "./components/EventTable";
+import { EmptyState, ErrorBox, TableSkeleton } from "./components/States";
+import { Filters } from "./components/Filters";
+import { DetailPanel } from "./components/DetailPanel";
 
 export default function App() {
   const { q, agent, status, event } = useUrlState();
   const events = useEvents({ q, agent, status });
-  const slow = useSlow(events.phase === 'loading');
+  const slow = useSlow(events.phase === "loading");
 
   const select = useCallback((id: string) => navigate({ event: id }), []);
-  const clearFilters = useCallback(() => navigate({ q: '', agent: '', status: '' }), []);
+  const clearFilters = useCallback(
+    () => navigate({ q: "", agent: "", status: "" }),
+    [],
+  );
   const hasFilters = Boolean(q || agent || status);
+
+  const closePanel = useCallback(() => navigate({ event: "" }), []);
 
   return (
     <div className="app">
       <header className="app-header">
         <h1>Agent Activity Explorer</h1>
       </header>
-
+      <Filters q={q} agent={agent} status={status} />
       <main>
-        {events.phase === 'loading' && (
+        {events.phase === "loading" && (
           <>
             <TableSkeleton />
-            {slow && <p className="slow" role="status">Still loading… the server is responding slowly.</p>}
+            {slow && (
+              <p className="slow" role="status">
+                Still loading… the server is responding slowly.
+              </p>
+            )}
           </>
         )}
 
-        {events.phase === 'error' && events.error && <ErrorBox error={events.error} onRetry={events.retry} />}
+        {events.phase === "error" && events.error && (
+          <ErrorBox error={events.error} onRetry={events.retry} />
+        )}
 
-        {events.phase === 'ready' &&
+        {events.phase === "ready" &&
           (events.items.length === 0 ? (
             <EmptyState hasFilters={hasFilters} onClear={clearFilters} />
           ) : (
             <>
-              <p className="count" aria-live="polite">{events.total.toLocaleString()} events</p>
+              <p className="count" aria-live="polite">
+                {events.total.toLocaleString()} events
+              </p>
               <EventTable
                 items={events.items}
                 selectedId={event || null}
@@ -48,6 +63,7 @@ export default function App() {
             </>
           ))}
       </main>
+      {event && <DetailPanel id={event} onClose={closePanel} />}
     </div>
   );
 }
