@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { getEvents } from './api';
-import type { ApiError } from './api';
-import type { EventItem } from './types';
+import { useCallback, useEffect, useRef, useState } from "react";
+import { getEvents } from "./api";
+import type { ApiError } from "./api";
+import type { EventItem } from "./types";
 
 interface Filters {
   q: string;
   agent: string;
   status: string;
+  from: string;
+  to: string;
 }
 
 interface State {
-  phase: 'loading' | 'ready' | 'error';
+  phase: "loading" | "ready" | "error";
   items: EventItem[];
   nextCursor: string | null;
   total: number;
@@ -20,8 +22,13 @@ interface State {
 }
 
 const INITIAL: State = {
-  phase: 'loading', items: [], nextCursor: null, total: 0,
-  error: null, loadingMore: false, moreError: null,
+  phase: "loading",
+  items: [],
+  nextCursor: null,
+  total: 0,
+  error: null,
+  loadingMore: false,
+  moreError: null,
 };
 
 function mergeUnique(a: EventItem[], b: EventItem[]): EventItem[] {
@@ -29,7 +36,7 @@ function mergeUnique(a: EventItem[], b: EventItem[]): EventItem[] {
   return [...a, ...b.filter((e) => !seen.has(e.id))];
 }
 
-export function useEvents({ q, agent, status }: Filters) {
+export function useEvents({ q, agent, status, from, to }: Filters) {
   const [state, setState] = useState<State>(INITIAL);
   const [attempt, setAttempt] = useState(0);
   const moreCtl = useRef<AbortController | null>(null);
@@ -40,27 +47,33 @@ export function useEvents({ q, agent, status }: Filters) {
     const ctl = new AbortController();
     busy.current = false;
     setState(INITIAL);
-    getEvents({ q, agent, status }, ctl.signal)
+    getEvents({ q, agent, status, from, to }, ctl.signal)
       .then((page) =>
-        setState({ ...INITIAL, phase: 'ready', items: page.items, nextCursor: page.nextCursor ?? null, total: page.total }),
+        setState({
+          ...INITIAL,
+          phase: "ready",
+          items: page.items,
+          nextCursor: page.nextCursor ?? null,
+          total: page.total,
+        }),
       )
       .catch((e: ApiError) => {
-        if (e.kind === 'abort') return;
-        setState({ ...INITIAL, phase: 'error', error: e });
+        if (e.kind === "abort") return;
+        setState({ ...INITIAL, phase: "error", error: e });
       });
     return () => {
       ctl.abort(); // a stale response can never overwrite newer results
       moreCtl.current?.abort();
     };
-  }, [q, agent, status, attempt]);
+  }, [q, agent, status, from, to, attempt]);
 
   const loadMore = useCallback(() => {
-    if (state.phase !== 'ready' || !state.nextCursor || busy.current) return;
+    if (state.phase !== "ready" || !state.nextCursor || busy.current) return;
     busy.current = true;
     const ctl = new AbortController();
     moreCtl.current = ctl;
     setState((s) => ({ ...s, loadingMore: true, moreError: null }));
-    getEvents({ q, agent, status, cursor: state.nextCursor }, ctl.signal)
+    getEvents({ q, agent, status, from, to, cursor: state.nextCursor }, ctl.signal)
       .then((page) => {
         busy.current = false;
         setState((s) => ({
@@ -72,11 +85,11 @@ export function useEvents({ q, agent, status }: Filters) {
         }));
       })
       .catch((e: ApiError) => {
-        if (e.kind === 'abort') return;
+        if (e.kind === "abort") return;
         busy.current = false;
         setState((s) => ({ ...s, loadingMore: false, moreError: e })); // keep the rows already loaded
       });
-  }, [state.phase, state.nextCursor, q, agent, status]);
+  }, [state.phase, state.nextCursor, q, agent, status, from, to]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
 
