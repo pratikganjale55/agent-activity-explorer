@@ -2,6 +2,7 @@
   font-family: 'IBM Plex Sans';
   src: url('../fonts/ibm-plex-sans.woff2') format('woff2');
   font-weight: 400 700;
+  font-display: swap;
 }
 
 :root {
@@ -35,7 +36,10 @@ body {
   top: 0;
   left: 0;
   height: 3px;
-  width: 0;
+ width: 100%;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  will-change: transform;
   background: var(--accent);
   z-index: 20;
 }
@@ -98,6 +102,7 @@ main {
 .hero-image {
   display: block;
   width: 100%;
+  height: auto;
 }
 
 .hero-copy {
@@ -133,6 +138,7 @@ main {
   display: flex;
   gap: 48px;
   white-space: nowrap;
+  will-change: transform;
   animation: alerts-scroll 18s linear infinite;
 }
 
@@ -143,13 +149,22 @@ main {
 
 @keyframes alerts-scroll {
   from {
-    left: 100%;
+    transform: translateX(100vw);
   }
   to {
-    left: -120%;
+   transform: translateX(-100%);
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .alerts-track {
+    position: static;
+    padding: 8px 16px;
+    overflow-x: auto;
+    animation: none;
+    will-change: auto;
+  }
+}
 .section {
   margin-top: 40px;
 }
@@ -173,6 +188,7 @@ main {
 }
 
 .agent-card {
+  min-height: 220px;
   padding: 16px;
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -181,6 +197,7 @@ main {
 
 .agent-avatar {
   width: 48px;
+  height: 48px;
   border-radius: 12px;
 }
 
@@ -207,6 +224,7 @@ main {
 }
 
 .result-summary {
+   font-size: 13px;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -219,7 +237,10 @@ main {
   font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
-
+.results-loading {
+  padding: 16px;
+  color: var(--muted);
+}
 .results-count {
   color: var(--muted);
 }
@@ -234,6 +255,8 @@ main {
 }
 
 .result-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 42px;
   display: grid;
   grid-template-columns: 90px 160px 130px 70px 70px minmax(0, 1fr) 50px;
   gap: 12px;
@@ -278,6 +301,9 @@ main {
 
 .row-preview {
   position: fixed;
+  top: 0;
+  left: 0;
+  will-change: transform;
   z-index: 30;
   max-width: 320px;
   padding: 8px 12px;

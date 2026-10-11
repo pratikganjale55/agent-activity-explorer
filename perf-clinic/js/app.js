@@ -1,230 +1,367 @@
-const { pageSize, tickerIntervalMs, tickerVisibleRows, storageKey } = window.APP_CONFIG;
+const { pageSize, tickerIntervalMs, tickerVisibleRows, storageKey } =
+  window.APP_CONFIG;
 
-const grid = document.getElementById('agents');
-const searchInput = document.getElementById('search');
-const resultsList = document.getElementById('results');
-const resultsCount = document.getElementById('results-count');
-const topbar = document.querySelector('.topbar');
-const backToTop = document.getElementById('back-to-top');
-const progress = document.getElementById('read-progress');
-const tickerToggle = document.getElementById('ticker-toggle');
-const preview = document.getElementById('row-preview');
-const scrollContext = document.getElementById('scroll-context');
+const grid = document.getElementById("agents");
+const searchInput = document.getElementById("search");
+const resultsList = document.getElementById("results");
+const resultsCount = document.getElementById("results-count");
+const topbar = document.querySelector(".topbar");
+const backToTop = document.getElementById("back-to-top");
+const progress = document.getElementById("read-progress");
+const tickerToggle = document.getElementById("ticker-toggle");
+const preview = document.getElementById("row-preview");
+const scrollContext = document.getElementById("scroll-context");
 
-const minCardHeight = 220;
+let currentPage = []; // events currently rendered, indexed by each row's data-i
+const state = {
+  ready: false,
+  events: [],
+  haystack: [],
+  agentCounts: {},
+  minuteCounts: new Map(),
+};
 
 function escapeHtml(value) {
   return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function formatTime(iso) {
-  return new Date(iso).toLocaleTimeString('en-GB', { hour12: false, timeZone: 'UTC' });
-}
-
-function countByAgent(events) {
-  const counts = {};
-  events.forEach((event) => {
-    counts[event.agent] = (counts[event.agent] || 0) + 1;
-  });
-  return counts;
+  // ISO strings are already UTC: 'YYYY-MM-DDTHH:MM:SS.mmmZ' -> 'HH:MM:SS'.
+  // (toLocaleTimeString builds an Intl formatter on every call, which is slow when called per row.)
+  return iso.slice(11, 19);
 }
 
 function renderAgents() {
-  const counts = countByAgent(window.ACTIVITY);
   grid.innerHTML = window.AGENTS.map((agent, index) => {
-    const image = 'assets/agents/agent-' + String((index % 12) + 1).padStart(2, '0') + '.png';
+    const image =
+      "assets/agents/agent-" +
+      String((index % 6) + 1).padStart(2, "0") +
+      ".webp";
     return (
       '<article class="agent-card">' +
-      '<img class="agent-avatar" src="' + image + '" alt="">' +
-      '<h3>' + escapeHtml(agent.name) + '</h3>' +
-      '<p class="agent-owner">' + escapeHtml(agent.owner) + '</p>' +
-      '<p class="agent-description">' + escapeHtml(agent.description) + '</p>' +
-      '<p class="agent-count">' + (counts[agent.name] || 0).toLocaleString() + ' calls today</p>' +
-      '</article>'
+      '<img class="agent-avatar" src="' +
+      image +
+      '" width="48" height="48" loading="lazy" decoding="async" alt="">' +
+      "<h3>" +
+      escapeHtml(agent.name) +
+      "</h3>" +
+      '<p class="agent-owner">' +
+      escapeHtml(agent.owner) +
+      "</p>" +
+      '<p class="agent-description">' +
+      escapeHtml(agent.description) +
+      "</p>" +
+      '<p class="agent-count" data-agent="' +
+      escapeHtml(agent.name) +
+      '">… calls today</p>' +
+      "</article>"
     );
-  }).join('');
-  grid.querySelectorAll('img').forEach((img) => img.addEventListener('load', equalizeCardHeights));
+  }).join("");
 }
 
-function equalizeCardHeights() {
-  const cards = grid.querySelectorAll('.agent-card');
-  cards.forEach((card) => {
-    card.style.height = '';
-    const rowTop = card.offsetTop;
-    let tallest = Math.max(card.offsetHeight, minCardHeight);
-    cards.forEach((other) => {
-      if (other.offsetTop === rowTop) {
-        tallest = Math.max(tallest, other.offsetHeight);
-      }
-    });
-    card.style.height = tallest + 'px';
+function updateAgentCounts() {
+  grid.querySelectorAll(".agent-count").forEach((el) => {
+    el.textContent =
+      (state.agentCounts[el.dataset.agent] || 0).toLocaleString() +
+      " calls today";
   });
 }
 
+// Viewed ids are loaded once into a Set (O(1) lookups) and written back to localStorage at most once
+// per batch, off the critical path. The original re-parsed the whole JSON on every render, used
+// Array.includes (O(n)) and called JSON.stringify + setItem once per row (200 synchronous writes).
 function loadViewed() {
-  return JSON.parse(localStorage.getItem(storageKey) || '[]');
+  try {
+    return new Set(JSON.parse(localStorage.getItem(storageKey) || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+const viewed = loadViewed();
+let persistQueued = false;
+
+function persistViewed() {
+  if (persistQueued) return;
+  persistQueued = true;
+  const write = () => {
+    persistQueued = false;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify([...viewed]));
+    } catch {
+      /* storage full or unavailable: the badge is cosmetic, so ignore */
+    }
+  };
+  if ("requestIdleCallback" in window)
+    requestIdleCallback(write, { timeout: 2000 });
+  else setTimeout(write, 200);
 }
 
 function rememberViewed(items) {
-  const viewed = loadViewed();
+  let changed = false;
   for (const item of items) {
-    if (!viewed.includes(item.id)) {
-      viewed.push(item.id);
+    if (!viewed.has(item.id)) {
+      viewed.add(item.id);
+      changed = true;
     }
-    localStorage.setItem(storageKey, JSON.stringify(viewed));
   }
+  if (changed) persistViewed();
 }
 
 function search(query) {
   const needle = query.trim().toLowerCase();
-  return window.ACTIVITY
-    .filter((event) => JSON.stringify(event).toLowerCase().includes(needle))
-    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+  if (!needle) return state.events; // already sorted newest-first
+  const { events, haystack } = state;
+  const matches = [];
+  for (let i = 0; i < haystack.length; i++) {
+    if (haystack[i].includes(needle)) matches.push(events[i]);
+  }
+  return matches;
 }
 
 function renderResults(query) {
   const matches = search(query);
   const page = matches.slice(0, pageSize);
-  const viewed = loadViewed();
-  resultsCount.textContent = matches.length.toLocaleString() + ' matching tool calls';
-  resultsList.innerHTML = page.map((event) => {
-    const isNew = !viewed.includes(event.id);
-    return (
-      '<li class="result-row status-' + event.status + '" data-id="' + event.id + '" data-minute="' + event.timestamp.slice(11, 16) + '">' +
-      '<span class="result-time">' + formatTime(event.timestamp) + '</span>' +
-      '<span class="result-agent">' + escapeHtml(event.agent) + '</span>' +
-      '<span class="result-tool">' + escapeHtml(event.tool) + '</span>' +
-      '<span class="result-status">' + event.status + '</span>' +
-      '<span class="result-latency">' + event.latencyMs + ' ms</span>' +
-      '<span class="result-summary">' + escapeHtml(event.summary) + '</span>' +
-      (isNew ? '<span class="badge-new">New</span>' : '') +
-      '</li>'
-    );
-  }).join('');
-  fitSummaries();
+  resultsCount.textContent =
+    matches.length.toLocaleString() + " matching tool calls";
+  currentPage = page;
+  resultsList.innerHTML = page
+    .map((event, index) => {
+      const isNew = !viewed.has(event.id);
+      return (
+        '<li class="result-row status-' +
+        event.status +
+        '" data-i="' +
+        index +
+        '" data-id="' +
+        event.id +
+        '" data-minute="' +
+        event.timestamp.slice(11, 16) +
+        '">' +
+        '<span class="result-time">' +
+        formatTime(event.timestamp) +
+        "</span>" +
+        '<span class="result-agent">' +
+        escapeHtml(event.agent) +
+        "</span>" +
+        '<span class="result-tool">' +
+        escapeHtml(event.tool) +
+        "</span>" +
+        '<span class="result-status">' +
+        event.status +
+        "</span>" +
+        '<span class="result-latency">' +
+        event.latencyMs +
+        " ms</span>" +
+        '<span class="result-summary">' +
+        escapeHtml(event.summary) +
+        "</span>" +
+        (isNew ? '<span class="badge-new">New</span>' : "") +
+        "</li>"
+      );
+    })
+    .join("");
   rememberViewed(page);
+  observeRows();
 }
 
-function fitSummaries() {
-  resultsList.querySelectorAll('.result-summary').forEach((cell) => {
-    let size = 14;
-    cell.style.fontSize = size + 'px';
-    while (cell.scrollWidth > cell.clientWidth && size > 11) {
-      size -= 0.5;
-      cell.style.fontSize = size + 'px';
-    }
-  });
+// Scroll work is batched into one animation frame per frame and only touches what changed.
+// The progress bar uses transform (compositor-only) instead of width (layout), and the topbar no
+// longer changes its padding on every scroll tick (that re-laid-out the whole page).
+let maxScroll = 0;
+let scrollQueued = false;
+
+function measureScroll() {
+  maxScroll = document.documentElement.scrollHeight - window.innerHeight;
+}
+
+function applyScroll() {
+  scrollQueued = false;
+  const scrolled = window.scrollY;
+  progress.style.transform =
+    "scaleX(" + (maxScroll > 0 ? Math.min(1, scrolled / maxScroll) : 0) + ")";
+  topbar.classList.toggle("topbar-raised", scrolled > 8);
+  backToTop.classList.toggle("visible", scrolled > window.innerHeight);
 }
 
 function onScroll() {
-  const scrolled = window.scrollY;
-  const max = document.documentElement.scrollHeight - window.innerHeight;
-  progress.style.width = (max > 0 ? (scrolled / max) * 100 : 0) + '%';
-  topbar.classList.toggle('topbar-raised', scrolled > 8);
-  topbar.style.paddingBlock = Math.max(6, 12 - scrolled / 20) + 'px';
-  backToTop.classList.toggle('visible', scrolled > window.innerHeight);
-  resultsList.querySelectorAll('.result-row').forEach((row) => {
-    row.classList.remove('in-focus');
-    const rect = row.getBoundingClientRect();
-    if (rect.top > window.innerHeight * 0.3 && rect.top < window.innerHeight * 0.6) {
-      row.classList.add('in-focus');
-    }
+  if (scrollQueued) return;
+  scrollQueued = true;
+  requestAnimationFrame(applyScroll);
+}
+
+// "In focus" rows: the browser tells us when rows enter/leave the 30%-60% viewport band, instead of
+// calling getBoundingClientRect() on every row on every scroll event.
+let rowObserver = null;
+
+function observeRows() {
+  if (rowObserver) rowObserver.disconnect();
+  rowObserver = new IntersectionObserver(onFocusBand, {
+    rootMargin: "-30% 0px -40% 0px",
   });
-  const focused = resultsList.querySelector('.in-focus');
+  resultsList
+    .querySelectorAll(".result-row")
+    .forEach((row) => rowObserver.observe(row));
+}
+
+function onFocusBand(entries) {
+  entries.forEach((entry) =>
+    entry.target.classList.toggle("in-focus", entry.isIntersecting),
+  );
+  const focused = resultsList.querySelector(".in-focus");
   if (focused) {
     const minute = focused.dataset.minute;
-    const sameMinute = window.ACTIVITY.filter((event) => new Date(event.timestamp).toISOString().slice(11, 16) === minute).length;
-    scrollContext.textContent = minute + ' UTC · ' + sameMinute + ' calls that minute';
+    // Per-minute totals are precomputed once; the original re-scanned all 100k events with new Date().
+    scrollContext.textContent =
+      minute +
+      " UTC · " +
+      (state.minuteCounts.get(minute) || 0) +
+      " calls that minute";
   } else {
-    scrollContext.textContent = '';
+    scrollContext.textContent = "";
   }
 }
 
+// Hover preview: the row index is read from the DOM (no search through 100k events), position updates
+// are batched to one per frame, and the tooltip is moved with transform (no layout).
+let pendingPreview = null;
+let previewQueued = false;
+let shownIndex = -1;
+
 function hidePreview() {
+  pendingPreview = null;
+  shownIndex = -1;
   preview.hidden = true;
 }
 
-function showPreview(event) {
-  const row = event.target.closest('.result-row');
-  if (!row) return;
-  const item = window.ACTIVITY.find((candidate) => candidate.id === row.dataset.id);
-  if (!item) return;
-  preview.textContent = item.summary;
-  preview.style.top = event.clientY + 12 + 'px';
-  preview.style.left = event.clientX + 12 + 'px';
+function flushPreview() {
+  previewQueued = false;
+  if (!pendingPreview) return;
+  const { index, x, y } = pendingPreview;
+  if (index !== shownIndex) {
+    const item = currentPage[index];
+    if (!item) return;
+    preview.textContent = item.summary;
+    shownIndex = index;
+  }
+  preview.style.transform = "translate(" + (x + 12) + "px, " + (y + 12) + "px)";
   preview.hidden = false;
 }
 
-const renderedTickerRows = new Map();
+function showPreview(event) {
+  const row = event.target.closest(".result-row");
+  if (!row) return;
+  pendingPreview = {
+    index: Number(row.dataset.i),
+    x: event.clientX,
+    y: event.clientY,
+  };
+  if (!previewQueued) {
+    previewQueued = true;
+    requestAnimationFrame(flushPreview);
+  }
+}
+
+// Everything the ticker starts (timer, listeners) is now stopped in closeTicker(). Before, every
+// open added another setInterval and two more window listeners that were never removed, and a
+// Map cached a DOM node for every event ever shown (an unbounded, slowly growing leak).
 let tickerPanel = null;
+let tickerTimer = 0;
 
 function tickerRow(event) {
-  if (renderedTickerRows.has(event.id)) {
-    return renderedTickerRows.get(event.id).cloneNode(true);
-  }
-  const row = document.createElement('li');
-  row.className = 'ticker-row status-' + event.status;
+  const row = document.createElement("li");
+  row.className = "ticker-row status-" + event.status;
   row.innerHTML =
-    '<span class="ticker-time">' + formatTime(event.timestamp) + '</span>' +
-    '<span class="ticker-agent">' + escapeHtml(event.agent) + '</span>' +
-    '<span class="ticker-tool">' + escapeHtml(event.tool) + '</span>';
-  renderedTickerRows.set(event.id, row);
-  return row.cloneNode(true);
+    '<span class="ticker-time">' +
+    formatTime(event.timestamp) +
+    "</span>" +
+    '<span class="ticker-agent">' +
+    escapeHtml(event.agent) +
+    "</span>" +
+    '<span class="ticker-tool">' +
+    escapeHtml(event.tool) +
+    "</span>";
+  return row;
 }
 
 function positionTicker() {
   if (!tickerPanel) return;
-  tickerPanel.style.maxHeight = window.innerHeight - 120 + 'px';
+  tickerPanel.style.maxHeight = window.innerHeight - 120 + "px";
+}
+
+function onTickerKey(event) {
+  if (event.key === "Escape") closeTicker();
 }
 
 function openTicker() {
-  const panel = document.createElement('aside');
-  panel.className = 'ticker';
-  panel.innerHTML = '<header class="ticker-header">Live tool calls</header><ul class="ticker-list"></ul>';
+  const panel = document.createElement("aside");
+  panel.className = "ticker";
+  panel.innerHTML =
+    '<header class="ticker-header">Live tool calls</header><ul class="ticker-list"></ul>';
   document.body.appendChild(panel);
   tickerPanel = panel;
-  const list = panel.querySelector('.ticker-list');
+  const list = panel.querySelector(".ticker-list");
 
-  setInterval(() => {
-    const event = window.ACTIVITY[Math.floor(Math.random() * window.ACTIVITY.length)];
+  tickerTimer = setInterval(() => {
+    if (!state.events.length) return;
+    const event = state.events[Math.floor(Math.random() * state.events.length)];
     list.prepend(tickerRow(event));
     while (list.children.length > tickerVisibleRows) {
       list.lastElementChild.remove();
     }
   }, tickerIntervalMs);
 
-  window.addEventListener('resize', positionTicker);
-  window.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') closeTicker();
-  });
+  window.addEventListener("resize", positionTicker);
+  window.addEventListener("keydown", onTickerKey);
   positionTicker();
-  tickerToggle.setAttribute('aria-pressed', 'true');
-  tickerToggle.textContent = 'Hide live calls';
+  tickerToggle.setAttribute("aria-pressed", "true");
+  tickerToggle.textContent = "Hide live calls";
 }
 
 function closeTicker() {
   if (!tickerPanel) return;
+  clearInterval(tickerTimer);
+  tickerTimer = 0;
+  window.removeEventListener("resize", positionTicker);
+  window.removeEventListener("keydown", onTickerKey);
   tickerPanel.remove();
   tickerPanel = null;
-  tickerToggle.setAttribute('aria-pressed', 'false');
-  tickerToggle.textContent = 'Show live calls';
+  tickerToggle.setAttribute("aria-pressed", "false");
+  tickerToggle.textContent = "Show live calls";
 }
 
-searchInput.addEventListener('input', () => renderResults(searchInput.value));
-window.addEventListener('scroll', onScroll);
-window.addEventListener('resize', equalizeCardHeights);
-window.addEventListener('resize', fitSummaries);
-resultsList.addEventListener('mousemove', showPreview);
-resultsList.addEventListener('mouseleave', hidePreview);
-resultsList.addEventListener('wheel', hidePreview);
-resultsList.addEventListener('touchstart', hidePreview);
-backToTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
-tickerToggle.addEventListener('click', () => (tickerPanel ? closeTicker() : openTicker()));
+let searchTimer = 0;
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    if (state.ready) renderResults(searchInput.value);
+  }, 150);
+});
+window.addEventListener("scroll", onScroll, { passive: true });
+window.addEventListener("resize", measureScroll);
+new ResizeObserver(measureScroll).observe(document.body);
+resultsList.addEventListener("mousemove", showPreview, { passive: true });
+resultsList.addEventListener("mouseleave", hidePreview);
+// Passive: a non-passive wheel/touchstart listener makes the browser wait for JS before it may scroll.
+resultsList.addEventListener("wheel", hidePreview, { passive: true });
+resultsList.addEventListener("touchstart", hidePreview, { passive: true });
+backToTop.addEventListener("click", () => {
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  window.scrollTo({ top: 0, behavior: reduce ? "auto" : "smooth" });
+});
+tickerToggle.addEventListener("click", () =>
+  tickerPanel ? closeTicker() : openTicker(),
+);
 
 renderAgents();
-equalizeCardHeights();
-renderResults('');
+resultsList.innerHTML =
+  '<li class="results-loading" role="status">Loading tool calls…</li>';
+window.generateActivity(100000).then((data) => {
+  Object.assign(state, data, { ready: true });
+  updateAgentCounts();
+  renderResults(searchInput.value);
+});

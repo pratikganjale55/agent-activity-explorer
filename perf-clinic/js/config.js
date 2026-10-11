@@ -38,7 +38,14 @@ window.WORKSPACES = ['acme-production', 'acme-staging', 'acme-finance-eu', 'acme
 window.CHANNELS = ['the web console', 'the Slack integration', 'a scheduled workflow', 'the public API', 'an IDE extension'];
 window.STATUSES =['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'blocked', 'error'];
 
-window.ACTIVITY = (function buildActivity(count) {
+// The dataset used to be built synchronously in a render-blocking <script> in <head>
+// (~100k events, one long task). It is now generated in small chunks that yield to the
+// browser, so the page can paint and respond to input while the data is being built.
+window.generateActivity = async function generateActivity(count) {
+  const CHUNK = 2000; // ~10 ms of work per chunk, well under the 50 ms long-task threshold
+  const yieldToMain = () =>
+    window.scheduler && window.scheduler.yield ? window.scheduler.yield() : new Promise((resolve) => setTimeout(resolve, 0));
+
   let seed = 20261009;
   const random = () => {
     seed = (seed * 1664525 + 1013904223) % 4294967296;
@@ -46,20 +53,55 @@ window.ACTIVITY = (function buildActivity(count) {
   };
   const pick = (list) => list[Math.floor(random() * list.length)];
   const start = Date.UTC(2026, 9, 9, 0, 0, 0);
+
   const events = [];
+  const agentCounts = {};
+  const minuteCounts = new Map();
+
   for (let i = 0; i < count; i++) {
+    // Keep the order of random() calls identical to the original so the data is identical.
     const agent = pick(window.AGENTS).name;
     const tool = pick(window.TOOLS);
-    events.push({
-      id: 'evt_' + (100000 + i).toString(36) + Math.floor(random() * 1e6).toString(36),
-      timestamp: new Date(start + Math.floor(random() * 86400000)).toISOString(),
-      agent,
-      tool,
-      status: pick(window.STATUSES),
-      latencyMs: Math.floor(20 + random() * random() * 3000),
-      summary: tool + ' called by ' + agent + ' for request #' + Math.floor(random() * 90000 + 10000) +
-        ' on behalf of ' + pick(window.USERS) + ' in workspace ' + pick(window.WORKSPACES) + ' via ' + pick(window.CHANNELS),
-    });
+    const id = 'evt_' + (100000 + i).toString(36) + Math.floor(random() * 1e6).toString(36);
+    const ts = start + Math.floor(random() * 86400000);
+    const status = pick(window.STATUSES);
+    const latencyMs = Math.floor(20 + random() * random() * 3000);
+    const summary =
+      tool + ' called by ' + agent + ' for request #' + Math.floor(random() * 90000 + 10000) +
+      ' on behalf of ' + pick(window.USERS) + ' in workspace ' + pick(window.WORKSPACES) + ' via ' + pick(window.CHANNELS);
+    const timestamp = new Date(ts).toISOString();
+
+    events.push({ id, timestamp, ts, agent, tool, status, latencyMs, summary });
+
+    // Aggregates the UI needs, computed once here instead of re-scanning 100k rows later.
+    agentCounts[agent] = (agentCounts[agent] || 0) + 1;
+    const minute = timestamp.slice(11, 16);
+    minuteCounts.set(minute, (minuteCounts.get(minute) || 0) + 1);
+
+    if ((i + 1) % CHUNK === 0) await yieldToMain();
   }
-  return events;
-})(100000);
+
+  // Sort once, newest first. The original re-sorted the filtered list, with `new Date()` inside the
+  // comparator, on every keystroke. A numeric typed-array sort is ~10x faster than an object comparator
+  // sort: key = (reversed time offset) * SHIFT + original index, so ties keep their original order
+  // exactly like a stable sort would.
+  const SPAN = 86400000;
+  const SHIFT = 2 ** Math.ceil(Math.log2(count));
+  const keys = new Float64Array(count);
+  for (let i = 0; i < count; i++) keys[i] = (SPAN - 1 - (events[i].ts - start)) * SHIFT + i;
+  keys.sort();
+  const sorted = new Array(count);
+  for (let i = 0; i < count; i++) sorted[i] = events[keys[i] % SHIFT];
+  await yieldToMain();
+
+  // One lowercase string per event, built once. The original ran JSON.stringify().toLowerCase()
+  // on every event on every keystroke. Trade-off: ~20 MB extra memory for much faster search.
+  const haystack = new Array(count);
+  for (let i = 0; i < count; i++) {
+    const e = sorted[i];
+    haystack[i] = (e.id + ' ' + e.timestamp + ' ' + e.status + ' ' + e.latencyMs + ' ' + e.summary).toLowerCase();
+    if ((i + 1) % CHUNK === 0) await yieldToMain();
+  }
+
+  return { events: sorted, haystack, agentCounts, minuteCounts };
+};
