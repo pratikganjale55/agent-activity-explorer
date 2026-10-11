@@ -7,9 +7,11 @@ interface Props {
   q: string;
   agent: string;
   status: string;
+  from: string;
+  to: string;
 }
 
-export function Filters({ q, agent, status }: Props) {
+export function Filters({ q, agent, status, from, to }: Props) {
   const [text, setText] = useState(q);
   const agents = useFetch((signal) => getAgents(signal), 'agents');
 
@@ -53,7 +55,7 @@ export function Filters({ q, agent, status }: Props) {
       </select>
 
       {(q || agent || status) && (
-        <button onClick={() => navigate({ q: '', agent: '', status: '' })}>Clear</button>
+        <button onClick={() => navigate({ q: '', agent: '', status: '',  from: '', to: '' })}>Clear</button>
       )}
 
       {agents.error && (

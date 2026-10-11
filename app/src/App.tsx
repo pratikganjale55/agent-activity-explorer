@@ -6,15 +6,16 @@ import { EventTable } from "./components/EventTable";
 import { EmptyState, ErrorBox, TableSkeleton } from "./components/States";
 import { Filters } from "./components/Filters";
 import { DetailPanel } from "./components/DetailPanel";
+import { TimelinePanel } from './components/TimelinePanel';
 
 export default function App() {
-  const { q, agent, status, event } = useUrlState();
-  const events = useEvents({ q, agent, status });
+  const { q, agent, status, from, to, event } = useUrlState();
+  const events = useEvents({ q, agent, status, from, to });
   const slow = useSlow(events.phase === "loading");
 
   const select = useCallback((id: string) => navigate({ event: id }), []);
   const clearFilters = useCallback(
-    () => navigate({ q: "", agent: "", status: "" }),
+    () => navigate({ q: "", agent: "", status: "", from: "", to: "" }),
     [],
   );
   const hasFilters = Boolean(q || agent || status);
@@ -27,6 +28,7 @@ export default function App() {
         <h1>Agent Activity Explorer</h1>
       </header>
       <Filters q={q} agent={agent} status={status} />
+      <TimelinePanel q={q} agent={agent} status={status} from={from} to={to} />
       <main>
         {events.phase === "loading" && (
           <>

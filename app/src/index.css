@@ -52,3 +52,27 @@ table.events { width: 100%; border-collapse: collapse; font-size: 14px; }
 .panel dl { display: grid; grid-template-columns: 110px 1fr; gap: 6px 12px; }
 .panel dt { color: var(--muted); } .panel dd { margin: 0; word-break: break-all; }
 .json { max-height: 280px; overflow: auto; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+
+
+.timeline-panel { margin-bottom: 16px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
+.timeline-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 8px; }
+.timeline-head h2 { margin: 0; font-size: 16px; }
+.timeline-head button { margin-left: auto; }
+.timeline-body { min-height: 170px; }
+.timeline { display: block; width: 100%; height: auto; cursor: crosshair; touch-action: none; user-select: none; }
+.timeline .bar { fill: var(--accent); }
+.timeline .bar:hover { opacity: 0.75; }
+.timeline .axis { stroke: var(--border); }
+.timeline .grid { stroke: var(--border); stroke-dasharray: 3 3; }
+.timeline .tick { fill: var(--muted); font-size: 11px; }
+.timeline .brush { fill: var(--accent); fill-opacity: 0.25; stroke: var(--accent); }
+.hint { margin: 6px 0 0; font-size: 13px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
