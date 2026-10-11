@@ -27,7 +27,7 @@ export default function App() {
       <header className="app-header">
         <h1>Agent Activity Explorer</h1>
       </header>
-      <Filters q={q} agent={agent} status={status} />
+      <Filters q={q} agent={agent} status={status} from={from} to={to} />
       <TimelinePanel q={q} agent={agent} status={status} from={from} to={to} />
       <main>
         {events.phase === "loading" && (
